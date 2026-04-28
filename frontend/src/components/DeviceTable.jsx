@@ -94,7 +94,13 @@ export default function DeviceTable({ devices, onSelect, selectedMac, onUpdate }
 
 
   return (
-    <div style={{ overflowX: 'auto' }}>
+    <div style={{
+      overflowX: 'auto',
+      overflowY: 'auto',
+      maxHeight: 'calc(100vh - 260px)',
+      minHeight: 0,
+      paddingRight: '4px'
+    }}>
 
       <table
         style={{

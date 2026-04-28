@@ -37,7 +37,12 @@ export default function AlertList({ alerts, onResolve }) {
     <div style={{
       display:'flex',
       flexDirection:'column',
-      gap:'10px'
+      gap:'10px',
+      maxHeight:'calc(100vh - 260px)',
+      overflowY:'auto',
+      overflowX:'hidden',
+      paddingRight:'4px',
+      minHeight: 0
     }}>
 
       {alerts.map(a=>(
