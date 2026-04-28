@@ -94,16 +94,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ✅ FIX 1: Replace YOUR_ORG placeholder in all manifests at CI time
-      # This fixes the InvalidImageName error — no manual file editing needed
+      # ✅ Replace YOUR_ORG placeholder in manifests at CI time
       - name: Replace YOUR_ORG placeholder in manifests
         run: |
-          find infra/k8s/ -type f -name "*.yml" -o -name "*.yaml" | xargs \
-            sed -i 's|ghcr.io/YOUR_ORG|ghcr.io/${{ env.ORG }}|g'
-          echo "✅ Updated manifests:"
+          find infra/k8s/ -type f \( -name "*.yml" -o -name "*.yaml" \) \
+            -exec sed -i 's|ghcr.io/YOUR_ORG|ghcr.io/${{ env.ORG }}|g' {} +
+          echo "✅ Updated image references:"
           grep -r "ghcr.io" infra/k8s/
 
-      # ✅ FIX 2: Force docker driver — most stable on ubuntu-latest
+      # ✅ Start minikube with docker driver
       - name: Start minikube
         uses: medyagh/setup-minikube@latest
         with:
@@ -111,22 +110,23 @@ jobs:
           memory: 4096m
           driver: docker
 
-      # ✅ FIX 3: Write kubeconfig to a known path so every subsequent
-      # shell step can reach the cluster (fixes "connection refused")
-      - name: Export kubeconfig for all steps
+      # ✅ FIX: Update stale kubeconfig context immediately after start
+      # Fixes: "kubeconfig: Misconfigured / pointing to stale minikube-vm"
+      - name: Fix kubeconfig context
         run: |
+          minikube update-context
           mkdir -p $HOME/.kube
           minikube kubectl -- config view --raw > $HOME/.kube/config
           echo "KUBECONFIG=$HOME/.kube/config" >> $GITHUB_ENV
 
-      # ✅ Confirm cluster is reachable before doing anything else
+      # ✅ Confirm cluster is reachable
       - name: Verify cluster is reachable
         run: |
           minikube status
           kubectl cluster-info
           kubectl get nodes
 
-      # ✅ Authenticate so minikube can pull from GHCR
+      # ✅ Authenticate to GHCR
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -134,7 +134,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ✅ Load images directly into minikube — no in-cluster pull needed
+      # ✅ Load all images into minikube's local daemon
       - name: Load images into minikube
         run: |
           minikube image load ghcr.io/${{ env.ORG }}/ingestion-api:${{ github.sha }}
@@ -167,7 +167,7 @@ jobs:
             frontend=ghcr.io/${{ env.ORG }}/frontend:${{ github.sha }} \
             -n netmonitor
 
-      # ✅ Force k8s to use locally loaded image, not re-pull from registry
+      # ✅ Use locally loaded image — no registry pull inside cluster
       - name: Patch imagePullPolicy to IfNotPresent
         run: |
           for svc in ingestion-api processing-service backend-api frontend; do
