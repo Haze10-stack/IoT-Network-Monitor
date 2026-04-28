@@ -83,7 +83,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── Deploy to Kubernetes ───────────────────────────────────
+  # ── Deploy to Kubernetes (Minikube) ───────────────────────────────────
   deploy:
     name: Deploy to K8s
     runs-on: ubuntu-latest
@@ -93,32 +93,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
+      # ✅ NEW: Start minikube instead of relying on external KUBECONFIG
+      - name: Start minikube
+        uses: medyagh/setup-minikube@latest
 
-      - name: Configure kubeconfig
-        run: echo "${{ secrets.KUBECONFIG }}" | base64 -d > /tmp/kubeconfig
+      - name: Verify cluster is up
+        run: kubectl get pods -A
+
+      # ✅ NEW: Pull images from GHCR into minikube's Docker daemon
+      - name: Load images into minikube
+        run: |
+          minikube image load ghcr.io/omkarp-bit/ingestion-api:${{ github.sha }}
+          minikube image load ghcr.io/omkarp-bit/processing-service:${{ github.sha }}
+          minikube image load ghcr.io/omkarp-bit/backend-api:${{ github.sha }}
+          minikube image load ghcr.io/omkarp-bit/frontend:${{ github.sha }}
 
       - name: Apply namespace
-        run: kubectl apply -f infra/k8s/namespace.yaml --kubeconfig /tmp/kubeconfig
+        run: kubectl apply -f infra/k8s/namespace.yaml
 
       - name: Deploy all services
         run: |
-          kubectl apply -f infra/k8s/ingestion-api/ --kubeconfig /tmp/kubeconfig
-          kubectl apply -f infra/k8s/processing-service/ --kubeconfig /tmp/kubeconfig
-          kubectl apply -f infra/k8s/backend-api/ --kubeconfig /tmp/kubeconfig
-          kubectl apply -f infra/k8s/frontend/ --kubeconfig /tmp/kubeconfig
+          kubectl apply -f infra/k8s/ingestion-api/
+          kubectl apply -f infra/k8s/processing-service/
+          kubectl apply -f infra/k8s/backend-api/
+          kubectl apply -f infra/k8s/frontend/
 
       - name: Update image tags
         run: |
-          kubectl set image deployment/ingestion-api ingestion-api=ghcr.io/omkarp-bit/ingestion-api:${{ github.sha }} -n netmonitor --kubeconfig /tmp/kubeconfig
-          kubectl set image deployment/processing-service processing-service=ghcr.io/omkarp-bit/processing-service:${{ github.sha }} -n netmonitor --kubeconfig /tmp/kubeconfig
-          kubectl set image deployment/backend-api backend-api=ghcr.io/omkarp-bit/backend-api:${{ github.sha }} -n netmonitor --kubeconfig /tmp/kubeconfig
-          kubectl set image deployment/frontend frontend=ghcr.io/omkarp-bit/frontend:${{ github.sha }} -n netmonitor --kubeconfig /tmp/kubeconfig
+          kubectl set image deployment/ingestion-api \
+            ingestion-api=ghcr.io/omkarp-bit/ingestion-api:${{ github.sha }} \
+            -n netmonitor
+          kubectl set image deployment/processing-service \
+            processing-service=ghcr.io/omkarp-bit/processing-service:${{ github.sha }} \
+            -n netmonitor
+          kubectl set image deployment/backend-api \
+            backend-api=ghcr.io/omkarp-bit/backend-api:${{ github.sha }} \
+            -n netmonitor
+          kubectl set image deployment/frontend \
+            frontend=ghcr.io/omkarp-bit/frontend:${{ github.sha }} \
+            -n netmonitor
 
       - name: Verify rollouts
         run: |
-          kubectl rollout status deployment/ingestion-api -n netmonitor --kubeconfig /tmp/kubeconfig
-          kubectl rollout status deployment/processing-service -n netmonitor --kubeconfig /tmp/kubeconfig
-          kubectl rollout status deployment/backend-api -n netmonitor --kubeconfig /tmp/kubeconfig
-          kubectl rollout status deployment/frontend -n netmonitor --kubeconfig /tmp/kubeconfig
+          kubectl rollout status deployment/ingestion-api -n netmonitor --timeout=120s
+          kubectl rollout status deployment/processing-service -n netmonitor --timeout=120s
+          kubectl rollout status deployment/backend-api -n netmonitor --timeout=120s
+          kubectl rollout status deployment/frontend -n netmonitor --timeout=120s
