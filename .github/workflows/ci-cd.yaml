@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  ORG: omkarp-bit  # ✅ Single place to change your org name
+  ORG: omkarp-bit
 
 jobs:
   # ── Lint & Test ─────────────────────────────────────────────
@@ -94,7 +94,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ✅ FIX: Catch placeholder before anything runs
+      # ✅ Catch placeholder before anything runs
       - name: Validate no placeholder image names in manifests
         run: |
           if grep -r "YOUR_ORG" infra/k8s/; then
@@ -103,17 +103,31 @@ jobs:
           fi
           echo "✅ No placeholders found"
 
-      # ✅ FIX: Minikube with enough resources to schedule all pods
+      # ✅ Force docker driver — most reliable on ubuntu-latest runners
       - name: Start minikube
         uses: medyagh/setup-minikube@latest
         with:
           cpus: 2
           memory: 4096m
+          driver: docker
 
-      - name: Verify cluster is up
-        run: kubectl get pods -A
+      # ✅ Explicitly write kubeconfig to a known path and set KUBECONFIG env
+      # Each `run:` step is a fresh shell — without this, kubectl falls back
+      # to localhost:8080 and gets "connection refused"
+      - name: Export kubeconfig for all steps
+        run: |
+          mkdir -p $HOME/.kube
+          minikube kubectl -- config view --raw > $HOME/.kube/config
+          echo "KUBECONFIG=$HOME/.kube/config" >> $GITHUB_ENV
 
-      # ✅ FIX: Authenticate so minikube can pull from GHCR
+      # ✅ Confirm cluster is reachable before doing anything else
+      - name: Verify cluster is reachable
+        run: |
+          minikube status
+          kubectl cluster-info
+          kubectl get nodes
+
+      # ✅ Authenticate so minikube can pull from GHCR
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -121,7 +135,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ✅ FIX: Load images directly into minikube — no in-cluster pull needed
+      # ✅ Load images directly into minikube — no in-cluster pull needed
       - name: Load images into minikube
         run: |
           minikube image load ghcr.io/${{ env.ORG }}/ingestion-api:${{ github.sha }}
@@ -139,7 +153,7 @@ jobs:
           kubectl apply -f infra/k8s/backend-api/
           kubectl apply -f infra/k8s/frontend/
 
-      # ✅ FIX: Use correct org name, not YOUR_ORG placeholder
+      # ✅ Use env.ORG — no hardcoded or placeholder values
       - name: Update image tags
         run: |
           kubectl set image deployment/ingestion-api \
@@ -155,7 +169,7 @@ jobs:
             frontend=ghcr.io/${{ env.ORG }}/frontend:${{ github.sha }} \
             -n netmonitor
 
-      # ✅ FIX: imagePullPolicy so k8s uses locally loaded image
+      # ✅ Force k8s to use locally loaded image, not re-pull from registry
       - name: Patch imagePullPolicy to IfNotPresent
         run: |
           for svc in ingestion-api processing-service backend-api frontend; do
@@ -165,7 +179,7 @@ jobs:
               || true
           done
 
-      # ✅ FIX: Always runs — gives full debug info even when rollout fails
+      # ✅ Always runs — full debug info even when rollout fails
       - name: Debug pod state
         if: always()
         run: |
@@ -174,12 +188,13 @@ jobs:
           echo "====== EVENTS ======"
           kubectl get events -n netmonitor --sort-by='.lastTimestamp' | tail -30
           echo "====== LOGS (last 50 lines per pod) ======"
-          for pod in $(kubectl get pods -n netmonitor -o jsonpath='{.items[*].metadata.name}'); do
+          for pod in $(kubectl get pods -n netmonitor \
+            -o jsonpath='{.items[*].metadata.name}'); do
             echo "--- $pod ---"
             kubectl logs $pod -n netmonitor --tail=50 || true
           done
 
-      # ✅ FIX: 180s timeout gives pods enough time to become Ready
+      # ✅ 180s gives pods enough time to become Ready
       - name: Verify rollouts
         run: |
           kubectl rollout status deployment/ingestion-api -n netmonitor --timeout=180s
