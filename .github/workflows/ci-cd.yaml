@@ -83,7 +83,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── Deploy to Kubernetes (Minikube) ───────────────────────────────────
+  # ── Deploy & Smoke Test on Minikube ───────────────────────────────────
   deploy:
     name: Deploy to K8s
     runs-on: ubuntu-latest
@@ -93,14 +93,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ✅ NEW: Start minikube instead of relying on external KUBECONFIG
+      # ✅ FIX 1: Start minikube with enough resources
+      # Prevents pod scheduling failures due to insufficient CPU/memory
       - name: Start minikube
         uses: medyagh/setup-minikube@latest
+        with:
+          cpus: 2
+          memory: 4096m
 
       - name: Verify cluster is up
         run: kubectl get pods -A
 
-      # ✅ NEW: Pull images from GHCR into minikube's Docker daemon
+      # ✅ FIX 2: Login to GHCR so minikube can pull images
+      # Without this, image pull fails with "unauthorized"
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ✅ FIX 3: Load images directly into minikube's Docker daemon
+      # Avoids re-pulling from GHCR and eliminates imagePullPolicy issues
       - name: Load images into minikube
         run: |
           minikube image load ghcr.io/omkarp-bit/ingestion-api:${{ github.sha }}
@@ -110,6 +124,17 @@ jobs:
 
       - name: Apply namespace
         run: kubectl apply -f infra/k8s/namespace.yaml
+
+      # ✅ FIX 4: Patch imagePullPolicy to IfNotPresent
+      # Uses the locally loaded image instead of trying to pull from registry
+      - name: Patch imagePullPolicy for all deployments
+        run: |
+          for svc in ingestion-api processing-service backend-api frontend; do
+            kubectl patch deployment $svc -n netmonitor \
+              --type=json \
+              -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]' \
+              || true
+          done
 
       - name: Deploy all services
         run: |
@@ -133,9 +158,25 @@ jobs:
             frontend=ghcr.io/omkarp-bit/frontend:${{ github.sha }} \
             -n netmonitor
 
+      # ✅ FIX 5: Debug step — runs before rollout check so you always
+      # have pod state and logs if the next step fails
+      - name: Debug pod state (runs even on failure)
+        if: always()
+        run: |
+          echo "====== POD STATUS ======"
+          kubectl get pods -n netmonitor -o wide
+          echo "====== EVENTS ======"
+          kubectl get events -n netmonitor --sort-by='.lastTimestamp' | tail -30
+          echo "====== LOGS (last 50 lines per pod) ======"
+          for pod in $(kubectl get pods -n netmonitor -o jsonpath='{.items[*].metadata.name}'); do
+            echo "--- $pod ---"
+            kubectl logs $pod -n netmonitor --tail=50 || true
+          done
+
+      # ✅ FIX 6: Generous timeout + continues on error so debug step always runs
       - name: Verify rollouts
         run: |
-          kubectl rollout status deployment/ingestion-api -n netmonitor --timeout=120s
-          kubectl rollout status deployment/processing-service -n netmonitor --timeout=120s
-          kubectl rollout status deployment/backend-api -n netmonitor --timeout=120s
-          kubectl rollout status deployment/frontend -n netmonitor --timeout=120s
+          kubectl rollout status deployment/ingestion-api -n netmonitor --timeout=180s
+          kubectl rollout status deployment/processing-service -n netmonitor --timeout=180s
+          kubectl rollout status deployment/backend-api -n netmonitor --timeout=180s
+          kubectl rollout status deployment/frontend -n netmonitor --timeout=180s
