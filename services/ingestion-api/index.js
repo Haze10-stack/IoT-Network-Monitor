@@ -18,6 +18,7 @@ const packetsReceived = new client.Counter({
 });
 
 app.locals.metrics = { packetsReceived };
+app.locals.kafkaReady = false;
 
 // ── Middleware ───────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }));
@@ -40,6 +41,8 @@ app.get('/metrics', async (_req, res) => {
 // ── Start ─────────────────────────────────────────────────────────────────────
 (async () => {
   await connectProducer();
+  app.locals.kafkaReady = true;
+  console.log('[kafka] Producer ready');
   app.listen(PORT, () => {
     console.log(`[ingestion-api] Listening on port ${PORT}`);
   });

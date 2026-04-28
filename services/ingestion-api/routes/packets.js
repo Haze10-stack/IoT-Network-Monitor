@@ -20,6 +20,11 @@ const bodySchema = Joi.object({
 
 // ── POST /api/packets ────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
+  // Check if Kafka is ready
+  if (!req.app.locals.kafkaReady) {
+    return res.status(503).json({ error: 'Kafka not ready yet, retry in a few seconds' });
+  }
+
   const { error, value } = bodySchema.validate(req.body);
   if (error) {
     return res.status(400).json({ error: error.details[0].message });

@@ -1,5 +1,16 @@
 const { Device, Alert } = require('../db/mongo');
 const { getVendor }     = require('../oui/vendorLookup');  // offline, sync
+// Local allowlist for trusted MACs (add your own as needed)
+const ALLOWLIST = new Set([
+  // Example: 'AA:BB:CC:DD:EE:FF',
+]);
+
+// Helper: check if MAC is locally administered (second least significant bit of first byte is 1)
+function isLocallyAdministered(mac) {
+  if (!mac || mac.length < 2) return false;
+  const firstByte = parseInt(mac.slice(0, 2), 16);
+  return (firstByte & 0x02) === 0x02;
+}
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const TRAFFIC_SPIKE_THRESHOLD = 50;
@@ -15,13 +26,18 @@ const windowMap = new Map();
 async function processPacket(record) {
   const { nodeId, mac, rssi, type: frameType, subtype, receivedAt } = record;
 
+
   // ── 0. Filter noise ───────────────────────────────────────────────────────
   if (rssi < RSSI_NOISE_FLOOR) return;                  // too weak — ignore
   if (mac === 'FF:FF:FF:FF:FF:FF') return;              // broadcast — ignore
   if (mac === '00:00:00:00:00:00') return;              // null MAC — ignore
 
+
   // ── 1. Offline vendor lookup (instant, no API call) ───────────────────────
-  const vendor = getVendor(mac);
+  let vendor = getVendor(mac);
+  if (isLocallyAdministered(mac)) {
+    vendor = 'Local/Private';
+  }
 
   // ── 2. Upsert device ──────────────────────────────────────────────────────
   const device = await Device.findOneAndUpdate(
@@ -40,10 +56,19 @@ async function processPacket(record) {
     { upsert: true, new: true }
   );
 
-  // ── 3. Smarter rogue detection ─────────────────────────────────────────────
-  // Only alert if vendor is Unknown AND this is the first time we see it.
-  // Known vendors (Apple, Samsung, etc.) never trigger rogue alerts.
-  if (vendor === 'Unknown' && device.seenCount === 1) {
+  // ── 3. Improved rogue detection ───────────────────────────────────────────
+  // Only alert if:
+  //   - vendor is Unknown
+  //   - not in allowlist
+  //   - not locally administered
+  //   - seen at least 10 times (to avoid alerting on every new/temporary device)
+  const isUnknown = getVendor(mac) === 'Unknown';
+  const isAllowed = ALLOWLIST.has(mac.toUpperCase());
+  const isLocal = isLocallyAdministered(mac);
+  const shouldAlert = isUnknown && !isAllowed && !isLocal && device.seenCount >= 10;
+  // Debug log for every packet
+  console.log(`[debug] MAC=${mac} vendor=${vendor} seenCount=${device.seenCount} allowlist=${isAllowed} local=${isLocal} shouldAlert=${shouldAlert}`);
+  if (shouldAlert) {
     await raiseAlert({
       type:     'rogue_device',
       severity: 'high',
