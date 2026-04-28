@@ -9,7 +9,6 @@ on:
 env:
   REGISTRY: ghcr.io
   ORG: omkarp-bit
-  KUBECONFIG: /home/runner/.kube/config   # ✅ Set once at job level, applies to ALL steps
 
 jobs:
   # ── Lint & Test ─────────────────────────────────────────────
@@ -92,9 +91,6 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main'
 
-    env:
-      KUBECONFIG: /home/runner/.kube/config  # ✅ Hardcoded at job level
-
     steps:
       - uses: actions/checkout@v4
 
@@ -114,18 +110,14 @@ jobs:
           memory: 4096m
           driver: docker
 
-      # ✅ Write kubeconfig to the EXACT hardcoded path set in env above
-      # minikube update-context rewrites the stale entry first
-      - name: Fix and write kubeconfig
+      # ✅ FIX: Let minikube write its own kubeconfig properly
+      # Do NOT manually copy it — minikube manages this path itself
+      - name: Fix kubeconfig context
         run: |
           minikube update-context
-          mkdir -p /home/runner/.kube
-          minikube kubectl -- config view --raw > /home/runner/.kube/config
-          chmod 600 /home/runner/.kube/config
-          echo "✅ kubeconfig written to /home/runner/.kube/config"
-          cat /home/runner/.kube/config | grep server
+          echo "KUBECONFIG=$HOME/.kube/config" >> $GITHUB_ENV
 
-      # ✅ Verify kubectl can reach the cluster
+      # ✅ Verify kubectl works before proceeding
       - name: Verify cluster is reachable
         run: |
           minikube status
@@ -183,22 +175,21 @@ jobs:
               || true
           done
 
-      # ✅ Always runs — KUBECONFIG is set at job level so it works even on failure
+      # ✅ Always runs — uses minikube kubectl directly so kubeconfig issues
+      # can never affect this step
       - name: Debug pod state
         if: always()
         run: |
-          echo "====== KUBECONFIG CHECK ======"
-          echo "KUBECONFIG=$KUBECONFIG"
-          cat $KUBECONFIG | grep server || echo "kubeconfig missing or empty"
           echo "====== POD STATUS ======"
-          kubectl get pods -n netmonitor -o wide || true
+          minikube kubectl -- get pods -n netmonitor -o wide || true
           echo "====== EVENTS ======"
-          kubectl get events -n netmonitor --sort-by='.lastTimestamp' | tail -30 || true
+          minikube kubectl -- get events -n netmonitor \
+            --sort-by='.lastTimestamp' | tail -30 || true
           echo "====== LOGS (last 50 lines per pod) ======"
-          for pod in $(kubectl get pods -n netmonitor \
+          for pod in $(minikube kubectl -- get pods -n netmonitor \
             -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
             echo "--- $pod ---"
-            kubectl logs $pod -n netmonitor --tail=50 || true
+            minikube kubectl -- logs $pod -n netmonitor --tail=50 || true
           done
 
       - name: Verify rollouts
