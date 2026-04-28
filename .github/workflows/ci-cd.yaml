@@ -110,7 +110,6 @@ jobs:
           memory: 4096m
           driver: docker
 
-      # ✅ Let minikube manage its own kubeconfig
       - name: Fix kubeconfig context
         run: |
           minikube update-context
@@ -125,7 +124,7 @@ jobs:
       - name: Apply namespace
         run: kubectl apply -f infra/k8s/namespace.yaml
 
-      # ✅ FIX: Deploy Zookeeper first — Kafka depends on it
+      # ✅ Deploy Zookeeper and wait for it to be ready
       - name: Deploy Zookeeper
         run: |
           kubectl apply -n netmonitor -f - <<EOF
@@ -165,10 +164,9 @@ jobs:
               - port: 2181
                 targetPort: 2181
           EOF
-          echo "⏳ Waiting for Zookeeper..."
           kubectl rollout status deployment/zookeeper -n netmonitor --timeout=120s
 
-      # ✅ FIX: Deploy Kafka after Zookeeper is ready
+      # ✅ Deploy Kafka and wait for it to be ready
       - name: Deploy Kafka
         run: |
           kubectl apply -n netmonitor -f - <<EOF
@@ -214,10 +212,9 @@ jobs:
               - port: 9092
                 targetPort: 9092
           EOF
-          echo "⏳ Waiting for Kafka..."
           kubectl rollout status deployment/kafka -n netmonitor --timeout=120s
 
-      # ✅ Authenticate to GHCR
+      # ✅ Authenticate to GHCR on the runner
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -225,13 +222,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ✅ Load all images into minikube's local daemon
+      # ✅ FIX: Pull images into runner's Docker daemon first,
+      # THEN load into minikube — fixes ContainerCreating on fresh runners
+      - name: Pull images from GHCR into runner
+        run: |
+          docker pull ghcr.io/${{ env.ORG }}/ingestion-api:${{ github.sha }}
+          docker pull ghcr.io/${{ env.ORG }}/processing-service:${{ github.sha }}
+          docker pull ghcr.io/${{ env.ORG }}/backend-api:${{ github.sha }}
+          docker pull ghcr.io/${{ env.ORG }}/frontend:${{ github.sha }}
+
       - name: Load images into minikube
         run: |
           minikube image load ghcr.io/${{ env.ORG }}/ingestion-api:${{ github.sha }}
           minikube image load ghcr.io/${{ env.ORG }}/processing-service:${{ github.sha }}
           minikube image load ghcr.io/${{ env.ORG }}/backend-api:${{ github.sha }}
           minikube image load ghcr.io/${{ env.ORG }}/frontend:${{ github.sha }}
+          echo "✅ Images loaded into minikube:"
+          minikube image ls | grep ${{ env.ORG }}
 
       - name: Deploy all services
         run: |
