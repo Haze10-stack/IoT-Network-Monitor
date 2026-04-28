@@ -1,0 +1,19 @@
+{
+  "name": "processing-service",
+  "version": "1.0.0",
+  "description": "Consumes Kafka messages, detects anomalies, persists to MongoDB",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "mongoose": "^8.0.3",
+    "dotenv": "^16.3.1",
+    "prom-client": "^15.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

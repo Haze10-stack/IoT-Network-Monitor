@@ -1,0 +1,10 @@
+# Apply this manually — never commit real secrets to git
+# kubectl apply -f mongo-secret.yaml -n netmonitor
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongo-secret
+  namespace: netmonitor
+type: Opaque
+stringData:
+  uri: mongodb://mongo-service:27017/netmonitor   # replace with Atlas URI in production

@@ -1,0 +1,10 @@
+***.envservices/processing-service/src/oui/oui-db.json
+.env
+*.env
+node_modules/
+frontend-next/node_modules/
+# Ignore OUI / IEEE vendor database
+services/processing-service/src/oui/
+*.oui
+oui.txt
+ieee.json
