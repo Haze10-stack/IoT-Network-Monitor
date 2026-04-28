@@ -94,16 +94,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ✅ Catch placeholder before anything runs
-      - name: Validate no placeholder image names in manifests
+      # ✅ FIX 1: Replace YOUR_ORG placeholder in all manifests at CI time
+      # This fixes the InvalidImageName error — no manual file editing needed
+      - name: Replace YOUR_ORG placeholder in manifests
         run: |
-          if grep -r "YOUR_ORG" infra/k8s/; then
-            echo "❌ ERROR: Placeholder YOUR_ORG still exists in manifests!"
-            exit 1
-          fi
-          echo "✅ No placeholders found"
+          find infra/k8s/ -type f -name "*.yml" -o -name "*.yaml" | xargs \
+            sed -i 's|ghcr.io/YOUR_ORG|ghcr.io/${{ env.ORG }}|g'
+          echo "✅ Updated manifests:"
+          grep -r "ghcr.io" infra/k8s/
 
-      # ✅ Force docker driver — most reliable on ubuntu-latest runners
+      # ✅ FIX 2: Force docker driver — most stable on ubuntu-latest
       - name: Start minikube
         uses: medyagh/setup-minikube@latest
         with:
@@ -111,9 +111,8 @@ jobs:
           memory: 4096m
           driver: docker
 
-      # ✅ Explicitly write kubeconfig to a known path and set KUBECONFIG env
-      # Each `run:` step is a fresh shell — without this, kubectl falls back
-      # to localhost:8080 and gets "connection refused"
+      # ✅ FIX 3: Write kubeconfig to a known path so every subsequent
+      # shell step can reach the cluster (fixes "connection refused")
       - name: Export kubeconfig for all steps
         run: |
           mkdir -p $HOME/.kube
@@ -153,7 +152,6 @@ jobs:
           kubectl apply -f infra/k8s/backend-api/
           kubectl apply -f infra/k8s/frontend/
 
-      # ✅ Use env.ORG — no hardcoded or placeholder values
       - name: Update image tags
         run: |
           kubectl set image deployment/ingestion-api \
@@ -184,17 +182,16 @@ jobs:
         if: always()
         run: |
           echo "====== POD STATUS ======"
-          kubectl get pods -n netmonitor -o wide
+          kubectl get pods -n netmonitor -o wide || true
           echo "====== EVENTS ======"
-          kubectl get events -n netmonitor --sort-by='.lastTimestamp' | tail -30
+          kubectl get events -n netmonitor --sort-by='.lastTimestamp' | tail -30 || true
           echo "====== LOGS (last 50 lines per pod) ======"
           for pod in $(kubectl get pods -n netmonitor \
-            -o jsonpath='{.items[*].metadata.name}'); do
+            -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
             echo "--- $pod ---"
             kubectl logs $pod -n netmonitor --tail=50 || true
           done
 
-      # ✅ 180s gives pods enough time to become Ready
       - name: Verify rollouts
         run: |
           kubectl rollout status deployment/ingestion-api -n netmonitor --timeout=180s
